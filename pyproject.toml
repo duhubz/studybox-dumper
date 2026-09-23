@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "studybox-dumper"
+version = "0.1.0"
+description = "Convert StudyBox cassette recordings into Mesen2-playable .studybox files."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "studybox-dumper contributors" }]
+keywords = ["studybox", "nes", "cassette", "tape", "mfm", "mesen", "decoder"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "soundfile",
+]
+
+[project.scripts]
+studybox = "studybox.cli:main"
+studybox-gui = "studybox.gui:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0", "pyinstaller-hooks-contrib>=2024.0"]
+
+[tool.setuptools.packages.find]
+include = ["studybox*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

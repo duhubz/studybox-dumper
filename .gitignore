@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Captures and media — never commit these (copyright / size)
+*.wav
+*.flac
+*.ogg
+*.studybox
+*.nes
+*.bin
+dumps/
+captures/
+testdump/
+

@@ -1,0 +1,146 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: studybox-win-x64
+            binary: dist/studybox/studybox.exe
+          - os: ubuntu-22.04
+            artifact: studybox-linux-x64
+            binary: dist/studybox/studybox
+          - os: macos-15-intel
+            artifact: studybox-mac-x64
+            binary: dist/studybox/studybox
+          - os: macos-15
+            artifact: studybox-mac-arm64
+            binary: dist/studybox/studybox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[build]"
+      - name: Build
+        run: pyinstaller --noconfirm studybox.spec
+      - name: Smoke test (built binary)
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, 'tests'); import capture_fixture; from pathlib import Path; capture_fixture.write_capture(Path('smoke.wav'), sample_rate=96000)"
+          "${{ matrix.binary }}" --version
+          "${{ matrix.binary }}" roundtrip smoke.wav
+          "${{ matrix.binary }}" decode smoke.wav --quiet --studybox smoke.studybox
+          "${{ matrix.binary }}" verify --studybox smoke.studybox
+      - name: Package
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python -c "import shutil; shutil.make_archive('${{ matrix.artifact }}', 'zip', 'dist')"
+          else
+            # PyInstaller's POSIX layouts rely on file and directory symlinks;
+            # -y stores the links themselves instead of dereferencing them.
+            (cd dist && zip -y -r "../${{ matrix.artifact }}.zip" .)
+          fi
+      - name: Extract archive
+        shell: bash
+        run: |
+          rm -rf extracted
+          mkdir -p extracted
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python -c "import zipfile; zipfile.ZipFile('${{ matrix.artifact }}.zip').extractall('extracted')"
+          else
+            # unzip restores stored symlinks; Python's extractall does not.
+            unzip -q "${{ matrix.artifact }}.zip" -d extracted
+          fi
+      - name: Verify extracted symlinks match the build tree
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          collect_links() {
+            (cd "$1" && find . -type l | sort | while read -r link; do
+              printf '%s -> %s\n' "$link" "$(readlink "$link")"
+            done)
+          }
+          collect_links dist > dist_links.txt
+          collect_links extracted > extracted_links.txt
+          diff -u dist_links.txt extracted_links.txt
+      - name: Smoke test (extracted CLI)
+        shell: bash
+        run: |
+          BINARY="${{ matrix.binary }}"
+          BIN="extracted/${BINARY#dist/}"
+          "$BIN" --version
+          "$BIN" roundtrip smoke.wav
+          "$BIN" decode smoke.wav --quiet --studybox extracted.studybox
+          "$BIN" verify --studybox extracted.studybox | tee verify.txt
+          grep -q "verify: PASS" verify.txt
+      - name: GUI smoke test (extracted Linux, xvfb)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          command -v xvfb-run >/dev/null 2>&1 || {
+            sudo apt-get update && sudo apt-get install -y xvfb
+          }
+          set +e
+          xvfb-run -a timeout 10 ./extracted/studybox/studybox-gui
+          code=$?
+          set -e
+          if [ "$code" -ne 124 ]; then
+            echo "GUI exited before the timeout (exit code $code)" >&2
+            exit 1
+          fi
+      - name: macOS app bundle smoke test (extracted)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP="extracted/StudyBox Dumper.app"
+          test -d "$APP"
+          test -x "$APP/Contents/MacOS/studybox-gui"
+          find "$APP/Contents" -iname '*sndfile*' | grep -q .
+          "$APP/Contents/MacOS/studybox-gui" &
+          pid=$!
+          sleep 5
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "GUI app exited during launch" >&2
+            exit 1
+          fi
+          kill "$pid"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  release:
+    needs: build
+    # Manual workflow_dispatch builds on a branch must only produce artifacts;
+    # publishing requires an explicit version tag.
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip

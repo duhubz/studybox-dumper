@@ -1,0 +1,29 @@
+studybox-dumper
+Copyright (C) 2025 studybox-dumper contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See the LICENSE file for the full text.
+
+Distributing this program, or a modified version, over a network requires
+offering the corresponding source to users (AGPL section 13).
+
+Prebuilt binaries produced from this repository bundle third-party components,
+including but not limited to:
+
+  * libsndfile - GNU Lesser General Public License v2.1 or later
+    https://github.com/libsndfile/libsndfile
+
+  * Python and the Python standard library - PSF License
+
+  * NumPy - BSD 3-Clause License
+  * SciPy - BSD 3-Clause License
+  * soundfile - BSD 3-Clause License
+  * PyInstaller (bootloader) - GNU GPL v2 with a special exception that permits
+    distributing bundled applications under any license
+    https://pyinstaller.org/en/stable/license.html
+
+Each component remains under its own license; the AGPL above applies to this
+project's own code. This repository contains no copyrighted ROMs, BIOS files, or
+tape captures.
