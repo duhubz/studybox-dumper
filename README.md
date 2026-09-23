@@ -5,7 +5,7 @@
     </td>
     <td valign="middle">
       <h1>studybox-dumper</h1>
-      <p>Turn StudyBox cassette recordings into <code>.studybox</code> files that <a href="https://github.com/SourMesen/Mesen2">Mesen2</a> can load and play. The desktop app decodes and verifies recordings, and can help recover whole pages from another recording of the same program. Each container holds decoded pages and a mono narration track (or silence when the capture has no narration).</p>
+      <p>Turn StudyBox cassette recordings into <code>.studybox</code> files that <a href="https://github.com/SourMesen/Mesen2">Mesen2</a> can load and play. The desktop app decodes and verifies recordings, and can help recover whole pages from another recording of the same program. Each container holds decoded pages and a mono narration track (or silence when the capture has no narration). Coded with AI.</p>
     </td>
   </tr>
 </table>
