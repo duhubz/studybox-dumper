@@ -314,6 +314,17 @@ project's own encoder:
 python3 -m unittest discover -s tests -v
 ```
 
+## Special Thanks
+
+This project would not have been possible without the prior research and
+documentation of the StudyBox hardware, tape format, and preservation process:
+
+- **SourMesen** — [Mesen2](https://github.com/SourMesen/Mesen2) and the
+  [MfmDecoder](https://github.com/SourMesen/MfmDecoder).
+- **Zorchenhimer** — [StudyBox research and documentation](https://zorchenhimer.com/studybox/)
+  and the [NESdev wiki](https://www.nesdev.org/wiki/User:Zorchenhimer/StudyBox).
+- **cah4e3** — [early StudyBox dumping research](http://cah4e3.shedevr.org.ru/dumping_2005.php).
+
 ## License
 
 GNU Affero General Public License, version 3 or any later version
