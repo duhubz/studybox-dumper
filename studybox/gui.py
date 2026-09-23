@@ -110,10 +110,11 @@ class StudyBoxApp:
         self.output_var = tk.StringVar()
         self.no_audio_var = tk.BooleanVar(value=False)
         self.write_json_var = tk.BooleanVar(value=False)
+        self._suggested_output: str | None = None
         self.merge_base_var = tk.StringVar()
         self.merge_output_var = tk.StringVar()
         self.merge_json_var = tk.BooleanVar(value=False)
-        self.status_var = tk.StringVar(value="ready")
+        self.status_var = tk.StringVar(value="Ready")
         self._tooltips: list[ToolTip] = []
 
         self._build()
@@ -127,7 +128,7 @@ class StudyBoxApp:
         self.root.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
 
         self.notebook = ttk.Notebook(frame)
         self.notebook.grid(row=0, column=0, sticky="nsew")
@@ -142,16 +143,33 @@ class StudyBoxApp:
         self.notebook.add(merge_tab, text="Merge")
         self._build_merge_tab(merge_tab)
 
-        self.log = tk.Text(frame, height=14, width=80, state="disabled")
-        self.log.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        log_heading = ttk.Frame(frame)
+        log_heading.grid(row=1, column=0, sticky="ew", pady=(8, 2))
+        ttk.Label(log_heading, text="Dump Log").pack(side="left")
+        self.clear_log_button = ttk.Button(
+            log_heading, text="Clear Log", command=self._clear_log)
+        self.clear_log_button.pack(side="right")
+
+        log_frame = ttk.Frame(frame)
+        log_frame.grid(row=2, column=0, sticky="nsew")
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        self.log = tk.Text(log_frame, height=14, width=80, state="disabled")
+        self.log.grid(row=0, column=0, sticky="nsew")
+        self.log_scrollbar = ttk.Scrollbar(
+            log_frame, orient="vertical", command=self.log.yview)
+        self.log_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=self.log_scrollbar.set)
 
         ttk.Label(frame, textvariable=self.status_var, anchor="w").grid(
-            row=2, column=0, sticky="ew", pady=(6, 0))
+            row=3, column=0, sticky="ew", pady=(6, 0))
 
     def _build_decode_tab(self, frame: ttk.Frame) -> None:
         ttk.Label(frame, text="Capture file").grid(row=0, column=0, sticky="w")
         capture_entry = ttk.Entry(frame, textvariable=self.capture_var)
         capture_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        capture_entry.bind("<Return>", self._sync_default_output)
+        capture_entry.bind("<FocusOut>", self._sync_default_output)
         self.capture_button = ttk.Button(
             frame, text="Browse file...", command=self._browse_capture)
         self.capture_button.grid(
@@ -256,8 +274,17 @@ class StudyBoxApp:
 
     def _set_capture_target(self, chosen: str) -> None:
         self.capture_var.set(chosen)
-        if not self.output_var.get():
-            self.output_var.set(str(self._default_output_path(chosen)))
+        self._sync_default_output()
+
+    def _sync_default_output(self, _event: tk.Event | None = None) -> None:
+        capture_target = self.capture_var.get().strip()
+        if not capture_target:
+            return
+        current_output = self.output_var.get()
+        if not current_output or current_output == self._suggested_output:
+            suggested = str(self._default_output_path(capture_target))
+            self.output_var.set(suggested)
+            self._suggested_output = suggested
 
     def _default_output_path(self, capture_target: str | Path) -> Path:
         filename = Path(capture_target).with_suffix(".studybox").name
@@ -276,6 +303,7 @@ class StudyBoxApp:
             title="Save .studybox", defaultextension=".studybox",
             filetypes=[("StudyBox", "*.studybox")])
         if chosen:
+            self._suggested_output = None
             self.output_var.set(chosen)
 
     def _browse_merge_base(self) -> None:
@@ -326,6 +354,8 @@ class StudyBoxApp:
         output = self.output_var.get()
         if not output and capture_target:
             output = str(self._default_output_path(capture_target))
+            self.output_var.set(output)
+            self._suggested_output = output
         write_json = bool(self.write_json_var.get())
 
         def work() -> WorkerMessage:
@@ -410,9 +440,9 @@ class StudyBoxApp:
     # ---------------------------------------------------------------- workers
     def _run_async(self, work, label: str) -> None:
         if self._worker is not None and self._worker.is_alive():
-            self.status_var.set("busy with another task...")
+            self.status_var.set("Busy with another task...")
             return
-        self.status_var.set(f"{label}...")
+        self.status_var.set(f"{label.capitalize()}...")
         self._worker = threading.Thread(target=self._guarded, args=(work,),
                                         daemon=True)
         self._worker.start()
@@ -435,19 +465,19 @@ class StudyBoxApp:
                 message = self._messages.get_nowait()
                 self._log(message.text)
                 if message.kind == "error":
-                    self.status_var.set("failed")
+                    self.status_var.set("Failed")
                     messagebox.showerror("StudyBox Dumper", message.text,
                                          parent=self.root)
                 elif message.kind == "decode-pass":
-                    self.status_var.set("dump looks good")
+                    self.status_var.set("Dump looks good")
                     messagebox.showinfo("Dump looks good", message.popup_text,
                                         parent=self.root)
                 elif message.kind == "decode-fail":
-                    self.status_var.set("dump has problems")
+                    self.status_var.set("Dump has problems")
                     messagebox.showwarning("Dump has problems", message.popup_text,
                                            parent=self.root)
                 else:
-                    self.status_var.set("done")
+                    self.status_var.set("Done")
         except queue.Empty:
             pass
         self.root.after(100, self._poll)
@@ -456,6 +486,11 @@ class StudyBoxApp:
         self.log.configure(state="normal")
         self.log.insert("end", text.rstrip() + "\n")
         self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
 

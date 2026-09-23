@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "studybox-dumper"
-version = "0.2.1"
+version = "0.2.2"
 description = "Convert StudyBox cassette recordings into Mesen2-playable .studybox files."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -68,6 +68,8 @@ class GuiTest(unittest.TestCase):
             self.assertEqual(str(app.channel_box.cget("state")), "readonly")
             self.assertIsInstance(app.seconds_entry, ttk.Entry)
             self.assertIsInstance(app.no_audio_check, ttk.Checkbutton)
+            self.assertIsInstance(app.log_scrollbar, ttk.Scrollbar)
+            self.assertIsInstance(app.clear_log_button, ttk.Button)
             self.assertFalse(app.write_json_var.get())
             self.assertFalse(app.no_audio_var.get())
             self.assertGreaterEqual(len(app._tooltips), 6)
@@ -117,6 +119,7 @@ class GuiSnapshotTest(unittest.TestCase):
         app.output_var = _FakeVar("")
         app.no_audio_var = _FakeVar(False)
         app.write_json_var = _FakeVar(False)
+        app._suggested_output = None
         self.captured: dict = {}
 
         def fake_run(work, label):
@@ -144,6 +147,13 @@ class GuiSnapshotTest(unittest.TestCase):
         self.assertEqual(app.capture_var.get(), "/tmp/side-a capture.wav")
         self.assertEqual(app.output_var.get(),
                          "/tmp/gui-app/output/side-a capture.studybox")
+
+        app._set_capture_target("/tmp/side-b.wav")
+        self.assertEqual(app.output_var.get(), "/tmp/gui-app/output/side-b.studybox")
+
+        app.output_var.set("/tmp/custom.studybox")
+        app._set_capture_target("/tmp/side-c.wav")
+        self.assertEqual(app.output_var.get(), "/tmp/custom.studybox")
 
     def test_decode_rejects_folder_input(self) -> None:
         from studybox import gui
@@ -240,8 +250,8 @@ class GuiSnapshotTest(unittest.TestCase):
         from studybox import gui
 
         cases = [
-            ("decode-pass", "showinfo", "Dump looks good", "dump looks good"),
-            ("decode-fail", "showwarning", "Dump has problems", "dump has problems"),
+            ("decode-pass", "showinfo", "Dump looks good", "Dump looks good"),
+            ("decode-fail", "showwarning", "Dump has problems", "Dump has problems"),
         ]
         for kind, dialog, title, status in cases:
             with self.subTest(kind=kind):
@@ -258,6 +268,32 @@ class GuiSnapshotTest(unittest.TestCase):
                 show_dialog.assert_called_once_with(
                     title, "popup details", parent=app.root)
                 self.assertEqual(app.status_var.get(), status)
+
+    def test_finished_task_status_is_capitalized(self) -> None:
+        from studybox import gui
+
+        app = object.__new__(gui.StudyBoxApp)
+        app._messages = gui.queue.Queue()
+        app._messages.put(gui.WorkerMessage("ok", "task output"))
+        app._log = mock.Mock()
+        app.root = mock.Mock()
+        app.status_var = _FakeVar()
+
+        app._poll()
+
+        self.assertEqual(app.status_var.get(), "Done")
+
+    def test_clear_log_empties_text_widget(self) -> None:
+        from studybox import gui
+
+        app = object.__new__(gui.StudyBoxApp)
+        app.log = mock.Mock()
+
+        app._clear_log()
+
+        self.assertEqual(app.log.configure.call_args_list, [
+            mock.call(state="normal"), mock.call(state="disabled")])
+        app.log.delete.assert_called_once_with("1.0", "end")
 
     def test_merge_snapshots_inputs(self) -> None:
         from types import SimpleNamespace
