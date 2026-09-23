@@ -84,6 +84,7 @@ class WorkerMessage:
     kind: str
     text: str
     popup_text: str | None = None
+    popup_title: str | None = None
 
 
 class StudyBoxApp:
@@ -113,6 +114,7 @@ class StudyBoxApp:
         self._suggested_output: str | None = None
         self.merge_base_var = tk.StringVar()
         self.merge_output_var = tk.StringVar()
+        self._suggested_merge_output: str | None = None
         self.merge_json_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Ready")
         self._tooltips: list[ToolTip] = []
@@ -230,8 +232,10 @@ class StudyBoxApp:
 
     def _build_merge_tab(self, frame: ttk.Frame) -> None:
         ttk.Label(frame, text="Base .studybox").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.merge_base_var).grid(
-            row=0, column=1, sticky="ew", padx=4)
+        base_entry = ttk.Entry(frame, textvariable=self.merge_base_var)
+        base_entry.grid(row=0, column=1, sticky="ew", padx=4)
+        base_entry.bind("<Return>", self._sync_default_merge_output)
+        base_entry.bind("<FocusOut>", self._sync_default_merge_output)
         ttk.Button(frame, text="Browse...",
                    command=self._browse_merge_base).grid(row=0, column=2)
 
@@ -258,11 +262,9 @@ class StudyBoxApp:
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
-        self.merge_button = ttk.Button(buttons, text="Merge", command=self.merge)
+        self.merge_button = ttk.Button(
+            buttons, text="Merge + Verify", command=self.merge)
         self.merge_button.pack(side="left")
-        self.merge_verify_button = ttk.Button(
-            buttons, text="Verify output", command=self.verify_merge_output)
-        self.merge_verify_button.pack(side="left", padx=6)
 
     # ---------------------------------------------------------------- actions
     def _browse_capture(self) -> None:
@@ -312,9 +314,21 @@ class StudyBoxApp:
             filetypes=[("StudyBox", "*.studybox"), ("All files", "*.*")])
         if chosen:
             self.merge_base_var.set(chosen)
-            if not self.merge_output_var.get():
-                stem = Path(chosen).with_suffix("")
-                self.merge_output_var.set(str(stem) + "-merged.studybox")
+            self._sync_default_merge_output()
+
+    def _sync_default_merge_output(self, _event: tk.Event | None = None) -> None:
+        base_target = self.merge_base_var.get().strip()
+        if not base_target:
+            return
+        current_output = self.merge_output_var.get()
+        if not current_output or current_output == self._suggested_merge_output:
+            suggested = str(self._default_merge_output_path(base_target))
+            self.merge_output_var.set(suggested)
+            self._suggested_merge_output = suggested
+
+    def _default_merge_output_path(self, base_target: str | Path) -> Path:
+        filename = f"{Path(base_target).stem}-merged.studybox"
+        return self._launch_directory / "output" / filename
 
     def _add_merge_others(self) -> None:
         chosen = filedialog.askopenfilenames(
@@ -334,6 +348,7 @@ class StudyBoxApp:
             title="Save merged .studybox", defaultextension=".studybox",
             filetypes=[("StudyBox", "*.studybox")])
         if chosen:
+            self._suggested_merge_output = None
             self.merge_output_var.set(chosen)
 
     @staticmethod
@@ -382,11 +397,13 @@ class StudyBoxApp:
             verification = verify.verify_decode_result(outcome.result)
             if verification.passed:
                 kind = "decode-pass"
+                popup_title = "Dump looks good"
                 summary = "Dump looks good: all strict verification checks passed."
                 popup_text = (f"All strict verification checks passed.\n\n"
                               f"Saved to:\n{written}")
             else:
                 kind = "decode-fail"
+                popup_title = "Dump has problems"
                 summary = ("Dump has problems: strict verification failed; "
                            "see the checks below.")
                 popup_text = ("Strict verification found problems. The decoded file was "
@@ -395,7 +412,7 @@ class StudyBoxApp:
             log_text = (f"decoded {pages} page(s), wrote {written}{suffix} "
                         f"({audio_bytes} audio bytes)\n{text}\n"
                         f"{verification.render()}\n{summary}")
-            return WorkerMessage(kind, log_text, popup_text)
+            return WorkerMessage(kind, log_text, popup_text, popup_title)
 
         self._run_async(work, "decode")
 
@@ -403,9 +420,13 @@ class StudyBoxApp:
         base = self.merge_base_var.get()
         others = list(self.merge_others.get(0, "end"))
         output = self.merge_output_var.get()
+        if not output and base:
+            output = str(self._default_merge_output_path(base))
+            self.merge_output_var.set(output)
+            self._suggested_merge_output = output
         write_json = bool(self.merge_json_var.get())
 
-        def work() -> str:
+        def work() -> WorkerMessage:
             if not base or not output:
                 raise ValueError("select a base container and an output path")
             if not others:
@@ -417,25 +438,39 @@ class StudyBoxApp:
                 + [(f"other container {index}", path)
                    for index, path in enumerate(others, start=1)])
             outcome = merge.merge_files(base, others)
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
             if json_path is not None:
                 report.write_json(json_path, outcome.provenance)
             outcome.box.write(output)
+            open_conflicts = outcome.provenance["open_conflicts"]
             summary = (f"merged {len(outcome.box.pages)} page(s), "
                        f"{outcome.provenance['repaired']} repaired, "
-                       f"{outcome.provenance['open_conflicts']} open conflict(s)")
+                       f"{open_conflicts} open conflict(s)")
             suffix = f" and {json_path}" if json_path is not None else ""
-            verification = verify.verify_studybox(outcome.box).render()
-            return f"{summary}, wrote {output}{suffix}\n{verification}"
+            verification = verify.verify_studybox(outcome.box)
+            if verification.passed and not open_conflicts:
+                kind = "merge-pass"
+                popup_title = "Merged dump looks good"
+                result_summary = ("Merged dump looks good: all strict verification "
+                                  "checks passed.")
+                popup_text = (f"All strict verification checks passed.\n\n"
+                              f"Saved to:\n{output}")
+            else:
+                kind = "merge-fail"
+                popup_title = "Merged dump needs review"
+                problems = []
+                if not verification.passed:
+                    problems.append("Strict verification found problems.")
+                if open_conflicts:
+                    problems.append(f"{open_conflicts} unresolved merge conflict(s) remain.")
+                result_summary = "Merged dump needs review: " + " ".join(problems)
+                popup_text = (f"{' '.join(problems)} The merged file was saved to:\n"
+                              f"{output}\n\nSee the log and provenance report for details.")
+            log_text = (f"{summary}, wrote {output}{suffix}\n"
+                        f"{verification.render()}\n{result_summary}")
+            return WorkerMessage(kind, log_text, popup_text, popup_title)
 
         self._run_async(work, "merge")
-
-    def verify_merge_output(self) -> None:
-        output = self.merge_output_var.get()
-
-        def work() -> str:
-            return verify.verify_studybox_file(output).render()
-
-        self._run_async(work, "verify")
 
     # ---------------------------------------------------------------- workers
     def _run_async(self, work, label: str) -> None:
@@ -468,13 +503,14 @@ class StudyBoxApp:
                     self.status_var.set("Failed")
                     messagebox.showerror("StudyBox Dumper", message.text,
                                          parent=self.root)
-                elif message.kind == "decode-pass":
-                    self.status_var.set("Dump looks good")
-                    messagebox.showinfo("Dump looks good", message.popup_text,
+                elif message.kind.endswith("-pass"):
+                    self.status_var.set(message.popup_title or "Done")
+                    messagebox.showinfo(message.popup_title or "Success", message.popup_text,
                                         parent=self.root)
-                elif message.kind == "decode-fail":
-                    self.status_var.set("Dump has problems")
-                    messagebox.showwarning("Dump has problems", message.popup_text,
+                elif message.kind.endswith("-fail"):
+                    self.status_var.set(message.popup_title or "Needs review")
+                    messagebox.showwarning(message.popup_title or "Needs review",
+                                           message.popup_text,
                                            parent=self.root)
                 else:
                     self.status_var.set("Done")

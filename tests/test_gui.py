@@ -78,7 +78,7 @@ class GuiTest(unittest.TestCase):
             self.assertIsInstance(app.notebook, ttk.Notebook)
             self.assertEqual(app.notebook.index("end"), 2)
             self.assertIsNotNone(app.merge_button)
-            self.assertIsNotNone(app.merge_verify_button)
+            self.assertEqual(app.merge_button.cget("text"), "Merge + Verify")
             self.assertFalse(app.merge_json_var.get())
         finally:
             root.destroy()
@@ -120,6 +120,7 @@ class GuiSnapshotTest(unittest.TestCase):
         app.no_audio_var = _FakeVar(False)
         app.write_json_var = _FakeVar(False)
         app._suggested_output = None
+        app._suggested_merge_output = None
         self.captured: dict = {}
 
         def fake_run(work, label):
@@ -154,6 +155,31 @@ class GuiSnapshotTest(unittest.TestCase):
         app.output_var.set("/tmp/custom.studybox")
         app._set_capture_target("/tmp/side-c.wav")
         self.assertEqual(app.output_var.get(), "/tmp/custom.studybox")
+
+    def test_merge_base_picker_updates_default_output(self) -> None:
+        from studybox import gui
+
+        app = object.__new__(gui.StudyBoxApp)
+        app._launch_directory = Path("/tmp/gui-app")
+        app.merge_base_var = _FakeVar("")
+        app.merge_output_var = _FakeVar("")
+        app._suggested_merge_output = None
+
+        with mock.patch.object(gui.filedialog, "askopenfilename",
+                               side_effect=["/tmp/side-a.studybox",
+                                            "/tmp/side-b.studybox"]):
+            app._browse_merge_base()
+            self.assertEqual(app.merge_output_var.get(),
+                             "/tmp/gui-app/output/side-a-merged.studybox")
+
+            app._browse_merge_base()
+        self.assertEqual(app.merge_output_var.get(),
+                         "/tmp/gui-app/output/side-b-merged.studybox")
+
+        app.merge_output_var.set("/tmp/custom-merged.studybox")
+        app.merge_base_var.set("/tmp/side-c.studybox")
+        app._sync_default_merge_output()
+        self.assertEqual(app.merge_output_var.get(), "/tmp/custom-merged.studybox")
 
     def test_decode_rejects_folder_input(self) -> None:
         from studybox import gui
@@ -252,12 +278,17 @@ class GuiSnapshotTest(unittest.TestCase):
         cases = [
             ("decode-pass", "showinfo", "Dump looks good", "Dump looks good"),
             ("decode-fail", "showwarning", "Dump has problems", "Dump has problems"),
+            ("merge-pass", "showinfo", "Merged dump looks good",
+             "Merged dump looks good"),
+            ("merge-fail", "showwarning", "Merged dump needs review",
+             "Merged dump needs review"),
         ]
         for kind, dialog, title, status in cases:
             with self.subTest(kind=kind):
                 app = object.__new__(gui.StudyBoxApp)
                 app._messages = gui.queue.Queue()
-                app._messages.put(gui.WorkerMessage(kind, "log", "popup details"))
+                app._messages.put(gui.WorkerMessage(
+                    kind, "log", "popup details", title))
                 app._log = mock.Mock()
                 app.root = mock.Mock()
                 app.status_var = _FakeVar()
@@ -304,6 +335,7 @@ class GuiSnapshotTest(unittest.TestCase):
         app.merge_base_var = _FakeVar("/tmp/base.studybox")
         app.merge_others = _FakeListbox(["/tmp/other.studybox"])
         app.merge_output_var = _FakeVar("/tmp/merged.studybox")
+        app._suggested_merge_output = None
         app.merge_json_var = _FakeVar(False)
         self.captured = {}
 
@@ -323,17 +355,54 @@ class GuiSnapshotTest(unittest.TestCase):
         with mock.patch.object(gui.merge, "merge_files", side_effect=fake_merge), \
                 mock.patch.object(gui.paths, "require_distinct"), \
                 mock.patch.object(gui.verify, "verify_studybox",
-                                  return_value=mock.Mock(render=lambda: "VERIFY")):
+                                  return_value=mock.Mock(
+                                      passed=True, render=lambda: "VERIFY")):
             app.merge()
             app.merge_base_var.value = "/tmp/late-base.studybox"
             app.merge_others.items = ["/tmp/late.studybox"]
             app.merge_output_var.value = "/tmp/late.studybox"
-            text = self.captured["work"]()
+            response = self.captured["work"]()
 
         self.assertEqual(calls["merge"], ("/tmp/base.studybox", ["/tmp/other.studybox"]))
         self.assertEqual(self.captured["label"], "merge")
-        self.assertIn("1 repaired", text)
-        self.assertIn("VERIFY", text)
+        self.assertEqual(response.kind, "merge-pass")
+        self.assertIn("1 repaired", response.text)
+        self.assertIn("VERIFY", response.text)
+        self.assertIn("Merged dump looks good", response.text)
+
+    def test_merge_open_conflicts_require_review_even_if_verify_passes(self) -> None:
+        from types import SimpleNamespace
+
+        from studybox import gui
+
+        app = object.__new__(gui.StudyBoxApp)
+        app.merge_base_var = _FakeVar("/tmp/base.studybox")
+        app.merge_others = _FakeListbox(["/tmp/other.studybox"])
+        app.merge_output_var = _FakeVar("/tmp/merged.studybox")
+        app._suggested_merge_output = None
+        app.merge_json_var = _FakeVar(False)
+        self.captured = {}
+
+        def fake_run(work, label):
+            self.captured["work"] = work
+            self.captured["label"] = label
+
+        app._run_async = fake_run
+        box = SimpleNamespace(pages=[1], write=lambda path: Path(path))
+        outcome = SimpleNamespace(box=box, provenance={
+            "repaired": 0, "open_conflicts": 1, "page_count": 1})
+
+        with mock.patch.object(gui.merge, "merge_files", return_value=outcome), \
+                mock.patch.object(gui.paths, "require_distinct"), \
+                mock.patch.object(gui.verify, "verify_studybox",
+                                  return_value=mock.Mock(
+                                      passed=True, render=lambda: "verify: PASS")):
+            app.merge()
+            response = self.captured["work"]()
+
+        self.assertEqual(response.kind, "merge-fail")
+        self.assertEqual(response.popup_title, "Merged dump needs review")
+        self.assertIn("1 unresolved merge conflict(s) remain", response.popup_text)
 
     def test_merge_requires_an_other_recording(self) -> None:
         from studybox import gui
@@ -342,6 +411,7 @@ class GuiSnapshotTest(unittest.TestCase):
         app.merge_base_var = _FakeVar("/tmp/base.studybox")
         app.merge_others = _FakeListbox([])
         app.merge_output_var = _FakeVar("/tmp/merged.studybox")
+        app._suggested_merge_output = None
         app.merge_json_var = _FakeVar(False)
         self.captured = {}
 

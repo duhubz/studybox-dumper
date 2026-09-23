@@ -13,7 +13,7 @@ Layering:
 - :mod:`studybox.container` - ``.studybox`` read/write matching Mesen2.
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 from .container import Page, StudyBox
 

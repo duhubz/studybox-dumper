@@ -163,17 +163,20 @@ cannot rule out every undetected loss. Decode the other side's capture file to
 a separate `.studybox`, then use the GUI's **Merge** tab:
 
 1. Choose the first `.studybox` as **Base .studybox**. This file supplies the
-   narration audio and page offsets for the result.
+   narration audio and page offsets for the result. The merge output defaults
+   to `output/<base-name>-merged.studybox` under the directory where the GUI
+   was started, and its suggested filename follows a newly selected base.
 2. Add the other recording(s) under **Other recordings**.
-3. Choose an output path and click **Merge**. Select **Write provenance JSON**
-   to save the per-page source report.
+3. Change the output path if you prefer another location, then click
+   **Merge + Verify**. A popup reports the result; select **Write provenance
+   JSON** to save the per-page source report.
 
 The inputs must be recordings of the same program with the same page count.
 Pages are selected whole; bytes are never spliced between recordings. The GUI
-reports repaired pages and open conflicts, then verifies the output. A passing
-verification does not resolve an open merge conflict: inspect the provenance
-JSON's `open` entries before treating those pages as recovered. You should only
-merge your own recordings.
+reports repaired pages and open conflicts, then verifies the output as part of
+the merge. A passing verification does not resolve an open merge conflict:
+inspect the provenance JSON's `open` entries before treating those pages as
+recovered. You should only merge your own recordings.
 
 ## Verification and recovery reference
 
