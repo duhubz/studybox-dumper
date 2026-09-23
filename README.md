@@ -131,13 +131,18 @@ preserve the source data-track recording.
    anything. The data-channel default is channel 1 (the right channel in a
    standard stereo capture); select channel 0 if your data is on the left or if
    the capture is mono.
-2. Choose an **Output .studybox** path and click **Decode**. The log shows a
-   summary and per-page report. Select **Write JSON sidecar** if you also want
-   the decode report saved next to the container. If you decode both sides,
-   save them to distinct paths such as `side-a.studybox` and `side-b.studybox`.
-3. Click **Verify** to re-decode the selected capture and run the strict
-   capture-level verification gate. This button checks the selected capture,
-   not an existing `.studybox` file.
+2. The **Output .studybox** path defaults to an `output` folder under the
+   directory where the GUI was started, using the capture's filename. The
+   folder is created when needed. Change the path if you prefer another
+   location, then click **Decode**. The log shows a plain-language indication
+   of whether the dump passed, followed by the strict capture-level
+   verification result and per-page report. Select **Write JSON sidecar** if
+   you also want the decode report saved next to the container. If you decode
+   both sides, save them to distinct paths such as `side-a.studybox` and
+   `side-b.studybox`.
+3. **Verify** runs the same strict check without writing a container. It
+   re-decodes the selected capture; this button checks the capture, not an
+   existing `.studybox` file.
 
 The optional **Seconds** field limits processing to the first N seconds for a
 quick diagnostic. Clock and page boundaries are estimated from that partial

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -109,6 +110,7 @@ class GuiSnapshotTest(unittest.TestCase):
         from studybox import gui
 
         app = object.__new__(gui.StudyBoxApp)
+        app._launch_directory = Path.cwd()
         app.capture_var = _FakeVar("/tmp/first.wav")
         app.channel_var = _FakeVar("1")
         app.seconds_var = _FakeVar("")
@@ -134,12 +136,14 @@ class GuiSnapshotTest(unittest.TestCase):
         from studybox import gui
 
         app = self._app()
+        app._launch_directory = Path("/tmp/gui-app")
         with mock.patch.object(gui.filedialog, "askopenfilename",
                                return_value="/tmp/side-a capture.wav"):
             app._browse_capture()
 
         self.assertEqual(app.capture_var.get(), "/tmp/side-a capture.wav")
-        self.assertEqual(app.output_var.get(), "/tmp/side-a capture.studybox")
+        self.assertEqual(app.output_var.get(),
+                         "/tmp/gui-app/output/side-a capture.studybox")
 
     def test_decode_rejects_folder_input(self) -> None:
         from studybox import gui
@@ -161,35 +165,48 @@ class GuiSnapshotTest(unittest.TestCase):
 
         def fake_decode(target, channel=None, seconds=None):
             calls["decode"] = (target, channel, seconds)
-            return self._fake_outcome()
+            calls["outcome"] = self._fake_outcome()
+            return calls["outcome"]
 
         def fake_write(out, result, capture, no_audio=False):
             calls["output"] = out
             calls["no_audio"] = no_audio
             return (out, 3, 4)
 
-        with mock.patch.object(gui.api, "decode_file", side_effect=fake_decode), \
-                mock.patch.object(gui.api, "require_distinct_outputs"), \
-                mock.patch.object(gui.api, "write_studybox", side_effect=fake_write), \
-                mock.patch.object(gui.report, "render_text", return_value="TEXT"), \
-                mock.patch.object(gui.report, "decode_report", return_value={}):
-            app.decode()
-            app.capture_var.value = "/tmp/second.wav"      # typed while running
-            app.channel_var.value = "7"
-            app.seconds_var.value = "2"
-            app.no_audio_var.value = False
-            app.output_var.value = "/tmp/other.studybox"
-            text = self.captured["work"]()
+        with tempfile.TemporaryDirectory() as working_dir:
+            app._launch_directory = Path(working_dir)
+            with mock.patch.object(gui.api, "decode_file", side_effect=fake_decode), \
+                    mock.patch.object(gui.api, "require_distinct_outputs"), \
+                    mock.patch.object(gui.api, "write_studybox", side_effect=fake_write), \
+                    mock.patch.object(gui.report, "render_text", return_value="TEXT"), \
+                    mock.patch.object(gui.report, "decode_report", return_value={}), \
+                    mock.patch.object(gui.verify, "verify_decode_result",
+                                      return_value=mock.Mock(
+                                          passed=True, render=lambda: "VERIFY")) as verify:
+                app.decode()
+                app.capture_var.value = "/tmp/second.wav"  # typed while running
+                app.channel_var.value = "7"
+                app.seconds_var.value = "2"
+                app.no_audio_var.value = False
+                app.output_var.value = "/tmp/other.studybox"
+                text = self.captured["work"]()
+
+            self.assertEqual(calls["output"],
+                             str(Path(working_dir) / "output" / "first.studybox"))
+            self.assertTrue((Path(working_dir) / "output").is_dir())
+            verify.assert_called_once_with(calls["outcome"].result)
 
         self.assertEqual(calls["decode"], ("/tmp/first.wav", 1, 12.5))
-        self.assertEqual(calls["output"], "/tmp/first.studybox")
         self.assertTrue(calls["no_audio"])
+        self.assertIn("Dump looks good", text)
+        self.assertIn("VERIFY", text)
         self.assertIn("TEXT", text)
 
     def test_decode_writes_json_when_selected(self) -> None:
         from studybox import gui
 
         app = self._app()
+        app.output_var = _FakeVar("/tmp/first.studybox")
         app.write_json_var = _FakeVar(True)
         payload = {"tool": "studybox.decode"}
 
@@ -200,11 +217,15 @@ class GuiSnapshotTest(unittest.TestCase):
                                   return_value=("/tmp/first.studybox", 1, 2)), \
                 mock.patch.object(gui.report, "decode_report", return_value=payload), \
                 mock.patch.object(gui.report, "render_text", return_value="TEXT"), \
+                mock.patch.object(gui.verify, "verify_decode_result",
+                                  return_value=mock.Mock(
+                                      passed=False, render=lambda: "VERIFY")), \
                 mock.patch.object(gui.report, "write_json") as write_json:
             app.decode()
-            self.captured["work"]()
+            text = self.captured["work"]()
 
         write_json.assert_called_once_with(Path("/tmp/first.json"), payload)
+        self.assertIn("Dump has problems", text)
         # Both destinations were preflighted together before any write.
         outputs = guard.call_args.args[0]
         self.assertEqual([label for label, _ in outputs],

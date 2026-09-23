@@ -81,6 +81,7 @@ class StudyBoxApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
+        self._launch_directory = Path.cwd()
         self.root.title("StudyBox Dumper")
         self._icon_image: tk.PhotoImage | None = None
         icon_path = _window_icon_path()
@@ -197,7 +198,8 @@ class StudyBoxApp:
         self._add_tooltip(self.write_json_check,
                           "The JSON sidecar records page, checksum, and loss diagnostics.")
         self._add_tooltip(self.verify_button,
-                          "Re-decode and run the strict capture-level verification gate.")
+                          "Run the strict capture-level verification gate without writing a "
+                          "container. Decode includes this check when it saves a container.")
 
     def _build_merge_tab(self, frame: ttk.Frame) -> None:
         ttk.Label(frame, text="Base .studybox").grid(row=0, column=0, sticky="w")
@@ -246,7 +248,11 @@ class StudyBoxApp:
     def _set_capture_target(self, chosen: str) -> None:
         self.capture_var.set(chosen)
         if not self.output_var.get():
-            self.output_var.set(str(Path(chosen).with_suffix(".studybox")))
+            self.output_var.set(str(self._default_output_path(chosen)))
+
+    def _default_output_path(self, capture_target: str | Path) -> Path:
+        filename = Path(capture_target).with_suffix(".studybox").name
+        return self._launch_directory / "output" / filename
 
     @staticmethod
     def _require_capture_file(target: str) -> None:
@@ -310,7 +316,7 @@ class StudyBoxApp:
         no_audio = bool(self.no_audio_var.get())
         output = self.output_var.get()
         if not output and capture_target:
-            output = str(Path(capture_target).with_suffix(".studybox"))
+            output = str(self._default_output_path(capture_target))
         write_json = bool(self.write_json_var.get())
 
         def work() -> str:
@@ -327,15 +333,23 @@ class StudyBoxApp:
             api.require_distinct_outputs(
                 [("container output", output), ("JSON sidecar", json_path)],
                 outcome.capture)
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
             written, pages, audio_bytes = api.write_studybox(
                 output, outcome.result, outcome.capture, no_audio=no_audio)
             payload = report.decode_report(outcome.result)
             if json_path is not None:
                 report.write_json(json_path, payload)
             text = report.render_text(payload)
+            verification = verify.verify_decode_result(outcome.result)
+            if verification.passed:
+                summary = "Dump looks good: all strict verification checks passed."
+            else:
+                summary = ("Dump has problems: strict verification failed; "
+                           "see the checks below.")
             suffix = f" and {json_path}" if json_path is not None else ""
             return (f"decoded {pages} page(s), wrote {written}{suffix} "
-                    f"({audio_bytes} audio bytes)\n{text}")
+                    f"({audio_bytes} audio bytes)\n{summary}\n"
+                    f"{verification.render()}\n{text}")
 
         self._run_async(work, "decode")
 
