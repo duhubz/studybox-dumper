@@ -72,7 +72,7 @@ class GuiTest(unittest.TestCase):
             self.assertFalse(app.no_audio_var.get())
             self.assertGreaterEqual(len(app._tooltips), 6)
             self.assertIsNotNone(app.decode_button)
-            self.assertIsNotNone(app.verify_button)
+            self.assertEqual(app.decode_button.cget("text"), "Decode + Verify")
             self.assertIsInstance(app.notebook, ttk.Notebook)
             self.assertEqual(app.notebook.index("end"), 2)
             self.assertIsNotNone(app.merge_button)
@@ -189,7 +189,7 @@ class GuiSnapshotTest(unittest.TestCase):
                 app.seconds_var.value = "2"
                 app.no_audio_var.value = False
                 app.output_var.value = "/tmp/other.studybox"
-                text = self.captured["work"]()
+                response = self.captured["work"]()
 
             self.assertEqual(calls["output"],
                              str(Path(working_dir) / "output" / "first.studybox"))
@@ -198,9 +198,12 @@ class GuiSnapshotTest(unittest.TestCase):
 
         self.assertEqual(calls["decode"], ("/tmp/first.wav", 1, 12.5))
         self.assertTrue(calls["no_audio"])
-        self.assertIn("Dump looks good", text)
-        self.assertIn("VERIFY", text)
-        self.assertIn("TEXT", text)
+        self.assertEqual(response.kind, "decode-pass")
+        self.assertIn("Dump looks good", response.text)
+        self.assertIn("VERIFY", response.text)
+        self.assertIn("TEXT", response.text)
+        self.assertIn("Dump looks good", response.text.splitlines()[-1])
+        self.assertIn("All strict verification checks passed", response.popup_text)
 
     def test_decode_writes_json_when_selected(self) -> None:
         from studybox import gui
@@ -220,39 +223,41 @@ class GuiSnapshotTest(unittest.TestCase):
                 mock.patch.object(gui.verify, "verify_decode_result",
                                   return_value=mock.Mock(
                                       passed=False, render=lambda: "VERIFY")), \
-                mock.patch.object(gui.report, "write_json") as write_json:
+                 mock.patch.object(gui.report, "write_json") as write_json:
             app.decode()
-            text = self.captured["work"]()
+            response = self.captured["work"]()
 
         write_json.assert_called_once_with(Path("/tmp/first.json"), payload)
-        self.assertIn("Dump has problems", text)
+        self.assertEqual(response.kind, "decode-fail")
+        self.assertIn("Dump has problems", response.text)
+        self.assertIn("still saved to", response.popup_text)
         # Both destinations were preflighted together before any write.
         outputs = guard.call_args.args[0]
         self.assertEqual([label for label, _ in outputs],
                          ["container output", "JSON sidecar"])
 
-    def test_verify_snapshots_inputs(self) -> None:
+    def test_decode_verdict_shows_a_plain_language_popup(self) -> None:
         from studybox import gui
 
-        app = self._app()
-        app.seconds_var.value = "7"
-        calls: dict = {}
+        cases = [
+            ("decode-pass", "showinfo", "Dump looks good", "dump looks good"),
+            ("decode-fail", "showwarning", "Dump has problems", "dump has problems"),
+        ]
+        for kind, dialog, title, status in cases:
+            with self.subTest(kind=kind):
+                app = object.__new__(gui.StudyBoxApp)
+                app._messages = gui.queue.Queue()
+                app._messages.put(gui.WorkerMessage(kind, "log", "popup details"))
+                app._log = mock.Mock()
+                app.root = mock.Mock()
+                app.status_var = _FakeVar()
 
-        def fake_decode(target, channel=None, seconds=None):
-            calls["decode"] = (target, channel, seconds)
-            return self._fake_outcome()
+                with mock.patch.object(gui.messagebox, dialog) as show_dialog:
+                    app._poll()
 
-        with mock.patch.object(gui.api, "decode_file", side_effect=fake_decode), \
-                mock.patch.object(gui.verify, "verify_decode_result",
-                                  return_value=mock.Mock(render=lambda: "VERIFY")):
-            app.verify()
-            app.capture_var.value = "/tmp/second.wav"
-            app.channel_var.value = "7"
-            app.seconds_var.value = ""
-            text = self.captured["work"]()
-
-        self.assertEqual(calls["decode"], ("/tmp/first.wav", 1, 7.0))
-        self.assertIn("VERIFY", text)
+                show_dialog.assert_called_once_with(
+                    title, "popup details", parent=app.root)
+                self.assertEqual(app.status_var.get(), status)
 
     def test_merge_snapshots_inputs(self) -> None:
         from types import SimpleNamespace

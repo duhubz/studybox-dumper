@@ -12,6 +12,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -76,6 +77,15 @@ class ToolTip:
             self._window = None
 
 
+@dataclass(frozen=True)
+class WorkerMessage:
+    """A worker result and optional verification popup details."""
+
+    kind: str
+    text: str
+    popup_text: str | None = None
+
+
 class StudyBoxApp:
     """Main application window."""
 
@@ -91,7 +101,7 @@ class StudyBoxApp:
                 root.iconphoto(True, self._icon_image)
             except tk.TclError:
                 self._icon_image = None
-        self._messages: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._messages: queue.Queue[WorkerMessage] = queue.Queue()
         self._worker: threading.Thread | None = None
 
         self.capture_var = tk.StringVar()
@@ -176,10 +186,9 @@ class StudyBoxApp:
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=5, column=0, columnspan=4, sticky="ew", pady=8)
-        self.decode_button = ttk.Button(buttons, text="Decode", command=self.decode)
+        self.decode_button = ttk.Button(
+            buttons, text="Decode + Verify", command=self.decode)
         self.decode_button.pack(side="left")
-        self.verify_button = ttk.Button(buttons, text="Verify", command=self.verify)
-        self.verify_button.pack(side="left", padx=6)
 
         self._add_tooltip(capture_entry,
                           "Choose an audio capture file. Its filename can be anything.")
@@ -197,9 +206,9 @@ class StudyBoxApp:
                           "This does not recover narration audio.")
         self._add_tooltip(self.write_json_check,
                           "The JSON sidecar records page, checksum, and loss diagnostics.")
-        self._add_tooltip(self.verify_button,
-                          "Run the strict capture-level verification gate without writing a "
-                          "container. Decode includes this check when it saves a container.")
+        self._add_tooltip(
+            self.decode_button,
+            "Decode the capture, save a .studybox, and automatically check the decoded pages.")
 
     def _build_merge_tab(self, frame: ttk.Frame) -> None:
         ttk.Label(frame, text="Base .studybox").grid(row=0, column=0, sticky="w")
@@ -319,7 +328,7 @@ class StudyBoxApp:
             output = str(self._default_output_path(capture_target))
         write_json = bool(self.write_json_var.get())
 
-        def work() -> str:
+        def work() -> WorkerMessage:
             self._require_capture_file(capture_target)
             try:
                 seconds = float(seconds_text) if seconds_text else None
@@ -342,34 +351,23 @@ class StudyBoxApp:
             text = report.render_text(payload)
             verification = verify.verify_decode_result(outcome.result)
             if verification.passed:
+                kind = "decode-pass"
                 summary = "Dump looks good: all strict verification checks passed."
+                popup_text = (f"All strict verification checks passed.\n\n"
+                              f"Saved to:\n{written}")
             else:
+                kind = "decode-fail"
                 summary = ("Dump has problems: strict verification failed; "
                            "see the checks below.")
+                popup_text = ("Strict verification found problems. The decoded file was "
+                              f"still saved to:\n{written}\n\nSee the log for details.")
             suffix = f" and {json_path}" if json_path is not None else ""
-            return (f"decoded {pages} page(s), wrote {written}{suffix} "
-                    f"({audio_bytes} audio bytes)\n{summary}\n"
-                    f"{verification.render()}\n{text}")
+            log_text = (f"decoded {pages} page(s), wrote {written}{suffix} "
+                        f"({audio_bytes} audio bytes)\n{text}\n"
+                        f"{verification.render()}\n{summary}")
+            return WorkerMessage(kind, log_text, popup_text)
 
         self._run_async(work, "decode")
-
-    def verify(self) -> None:
-        capture_target = self.capture_var.get()
-        channel_text = self.channel_var.get()
-        seconds_text = self.seconds_var.get().strip()
-
-        def work() -> str:
-            self._require_capture_file(capture_target)
-            try:
-                seconds = float(seconds_text) if seconds_text else None
-            except ValueError as exc:
-                raise ValueError("seconds must be a number") from exc
-            outcome = api.decode_file(
-                capture_target, channel=self._parse_channel(channel_text),
-                seconds=seconds)
-            return verify.verify_decode_result(outcome.result).render()
-
-        self._run_async(work, "verify")
 
     def merge(self) -> None:
         base = self.merge_base_var.get()
@@ -421,18 +419,33 @@ class StudyBoxApp:
 
     def _guarded(self, work) -> None:
         try:
-            self._messages.put(("ok", work()))
+            result = work()
+            if isinstance(result, WorkerMessage):
+                message = result
+            else:
+                message = WorkerMessage("ok", result)
+            self._messages.put(message)
         except Exception as exc:  # surface any failure in the log
-            self._messages.put(("error", f"{type(exc).__name__}: {exc}"))
+            self._messages.put(
+                WorkerMessage("error", f"{type(exc).__name__}: {exc}"))
 
     def _poll(self) -> None:
         try:
             while True:
-                kind, text = self._messages.get_nowait()
-                self._log(text)
-                if kind == "error":
+                message = self._messages.get_nowait()
+                self._log(message.text)
+                if message.kind == "error":
                     self.status_var.set("failed")
-                    messagebox.showerror("StudyBox Dumper", text)
+                    messagebox.showerror("StudyBox Dumper", message.text,
+                                         parent=self.root)
+                elif message.kind == "decode-pass":
+                    self.status_var.set("dump looks good")
+                    messagebox.showinfo("Dump looks good", message.popup_text,
+                                        parent=self.root)
+                elif message.kind == "decode-fail":
+                    self.status_var.set("dump has problems")
+                    messagebox.showwarning("Dump has problems", message.popup_text,
+                                           parent=self.root)
                 else:
                     self.status_var.set("done")
         except queue.Empty:
